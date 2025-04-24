@@ -1,0 +1,112 @@
+
+// makeCall.ts
+import axios, { AxiosInstance, AxiosRequestConfig, Method } from 'axios';
+import axiosRetry from 'axios-retry';
+
+const axiosInstance: AxiosInstance = axios.create({
+  timeout: 10000,
+});
+
+// Enable retry for network errors and gzip issues
+axiosRetry(axiosInstance, {
+  retries: 2,
+  retryCondition: (error) =>
+    axiosRetry.isNetworkError(error) || error.message.includes('Unzip.handledStreamEnd'),
+});
+
+// Add gzip decompression error handling
+axiosInstance.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const isGzipError = error.message?.includes('Unzip.handledStreamEnd');
+    const config: AxiosRequestConfig & { _retryDecompress?: boolean } = error.config;
+
+    if (isGzipError && !config._retryDecompress) {
+      config._retryDecompress = true;
+
+      return axiosInstance.request({
+        ...config,
+        decompress: false,
+        headers: {
+          ...config.headers,
+          'Accept-Encoding': 'identity',
+        },
+      });
+    }
+
+    return Promise.reject(error);
+  }
+);
+
+type HttpMethod = 'get' | 'post' | 'put' | 'delete' | 'patch' | 'head';
+
+interface RequestOptions {
+  method: HttpMethod;
+  url: string;
+  data?: Record<string, any>;
+  headers?: Record<string, string>;
+}
+
+/**
+ * Makes an HTTP request using Axios with gzip error fallback.
+ */
+export async function makeRequest<T = any>({
+  method,
+  url,
+  data = {},
+  headers = {},
+}: RequestOptions): Promise<T> {
+  try {
+    const config: AxiosRequestConfig = {
+      method: method as Method,
+      url,
+      headers,
+    };
+
+    if (['get', 'delete', 'head'].includes(method)) {
+      config.params = data;
+    } else {
+      config.data = data;
+    }
+
+    const response = await axiosInstance.request<T>(config);
+    return response.data;
+  } catch (error: any) {
+    console.error(`❌ Request failed [${method.toUpperCase()} ${url}]:`, error.message);
+    throw error;
+  }
+}
+
+
+
+
+
+
+import { makeRequest } from './makeRequest';
+
+// GET
+const items = await makeRequest<{ id: number; name: string }[]>({
+  method: 'get',
+  url: 'https://api.example.com/items',
+  data: { limit: 10 }
+});
+
+// POST
+const newItem = await makeRequest<{ id: number }>({
+  method: 'post',
+  url: 'https://api.example.com/items',
+  data: { name: 'My Item' }
+});
+
+// PUT
+await makeRequest({
+  method: 'put',
+  url: 'https://api.example.com/items/123',
+  data: { name: 'Updated Name' }
+});
+
+// DELETE
+await makeRequest({
+  method: 'delete',
+  url: 'https://api.example.com/items/123'
+});

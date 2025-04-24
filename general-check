@@ -1,0 +1,31 @@
+axiosInstance.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const config = error.config as AxiosRequestConfig & { _retryDecompress?: boolean };
+
+    const errorMessage = error?.message || '';
+    const errorStack = error?.stack || '';
+
+    const isStreamOrGzipError =
+      /unzip\.handledstreamend/i.test(errorMessage) ||
+      /unzip\.handledstreamend/i.test(errorStack) ||
+      /incomingmessage\.handlestream/i.test(errorMessage) ||
+      /incomingmessage\.handlestream/i.test(errorStack) ||
+      /premature close|stream|decompression/i.test(errorMessage + errorStack);
+
+    if (isStreamOrGzipError && !config._retryDecompress) {
+      config._retryDecompress = true;
+
+      return axiosInstance.request({
+        ...config,
+        decompress: false,
+        headers: {
+          ...config.headers,
+          'Accept-Encoding': 'identity',
+        },
+      });
+    }
+
+    return Promise.reject(error);
+  }
+);
